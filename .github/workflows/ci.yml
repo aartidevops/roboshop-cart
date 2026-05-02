@@ -48,13 +48,11 @@ jobs:
           docker push ${{ env.ACR }}/${{ env.SERVICE_NAME }}:latest
           echo "Pushed: ${{ env.ACR }}/${{ env.SERVICE_NAME }}:${{ steps.tag.outputs.tag }}"
 
-  # ── Deploy to dev (auto on main branch) ──────────────────────
   deploy-dev:
     name: Deploy to dev
     needs: build
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
-
     steps:
       - name: Checkout gitops repo
         uses: actions/checkout@v4
@@ -66,27 +64,23 @@ jobs:
       - name: Update dev image tag
         run: |
           cd gitops
-          # Update image tag in dev values file
+          git pull origin main
           sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" \
             environments/dev/${{ env.SERVICE_NAME }}-values.yaml
           git config user.email "ci@roboshop.com"
           git config user.name "CI Bot"
           git add environments/dev/${{ env.SERVICE_NAME }}-values.yaml
-          git commit -m "ci: update ${{ env.SERVICE_NAME }} dev → ${{ needs.build.outputs.image_tag }}"
+          git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} dev → ${{ needs.build.outputs.image_tag }}"
           git push
-          echo "Dev deployment triggered for ${{ needs.build.outputs.image_tag }}"
+          echo "Dev deployment triggered"
 
-  # ── Deploy to UAT (manual trigger) ───────────────────────────
   deploy-uat:
     name: Deploy to UAT
-    needs: build
+    needs: [build, deploy-dev]    # ← waits for dev to finish first
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment:
       name: uat
-      # Go to repo Settings → Environments → uat
-      # Add required reviewers — someone must approve before this runs
-
     steps:
       - name: Checkout gitops repo
         uses: actions/checkout@v4
@@ -98,25 +92,23 @@ jobs:
       - name: Update UAT image tag
         run: |
           cd gitops
+          git pull origin main
           sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" \
             environments/uat/${{ env.SERVICE_NAME }}-values.yaml
           git config user.email "ci@roboshop.com"
           git config user.name "CI Bot"
           git add environments/uat/${{ env.SERVICE_NAME }}-values.yaml
-          git commit -m "ci: update ${{ env.SERVICE_NAME }} uat → ${{ needs.build.outputs.image_tag }}"
+          git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} uat → ${{ needs.build.outputs.image_tag }}"
           git push
           echo "UAT deployment triggered"
 
-  # ── Deploy to prod (manual trigger + approval) ────────────────
   deploy-prod:
     name: Deploy to prod
-    needs: [build, deploy-uat]
+    needs: [build, deploy-uat]    # ← waits for uat to finish first
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     environment:
       name: prod
-      # Requires approval from senior team member
-
     steps:
       - name: Checkout gitops repo
         uses: actions/checkout@v4
@@ -128,11 +120,12 @@ jobs:
       - name: Update prod image tag
         run: |
           cd gitops
+          git pull origin main
           sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" \
             environments/prod/${{ env.SERVICE_NAME }}-values.yaml
           git config user.email "ci@roboshop.com"
           git config user.name "CI Bot"
           git add environments/prod/${{ env.SERVICE_NAME }}-values.yaml
-          git commit -m "ci: update ${{ env.SERVICE_NAME }} prod → ${{ needs.build.outputs.image_tag }}"
+          git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} prod → ${{ needs.build.outputs.image_tag }}"
           git push
           echo "Prod deployment triggered"
