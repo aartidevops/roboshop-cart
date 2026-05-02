@@ -30,12 +30,14 @@ jobs:
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Image tag: $TAG"
 
-      - name: Login to ACR
-        uses: azure/docker-login@v1
+      - name: Azure login
+        uses: azure/login@v2
         with:
-          login-server: ${{ env.ACR }}
-          username: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
-          password: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: |
+          az acr login --name roboshopdevacr
 
       - name: Build and push Docker image
         run: |
