@@ -1,0 +1,138 @@
+name: CI — Catalogue
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  SERVICE_NAME: cart
+  ACR: roboshopdevacr.azurecr.io
+
+jobs:
+  # ── Build and push image ──────────────────────────────────────
+  build:
+    name: Build and push
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag
+        id: tag
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          BRANCH=$(echo ${GITHUB_REF_NAME} | sed 's/\//-/g')
+          TAG="${BRANCH}-${SHORT_SHA}"
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Image tag: $TAG"
+
+      - name: Login to ACR
+        uses: azure/docker-login@v1
+        with:
+          login-server: ${{ env.ACR }}
+          username: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientId }}
+          password: ${{ fromJSON(secrets.AZURE_CREDENTIALS).clientSecret }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build \
+            --tag ${{ env.ACR }}/${{ env.SERVICE_NAME }}:${{ steps.tag.outputs.tag }} \
+            --tag ${{ env.ACR }}/${{ env.SERVICE_NAME }}:latest \
+            .
+          docker push ${{ env.ACR }}/${{ env.SERVICE_NAME }}:${{ steps.tag.outputs.tag }}
+          docker push ${{ env.ACR }}/${{ env.SERVICE_NAME }}:latest
+          echo "Pushed: ${{ env.ACR }}/${{ env.SERVICE_NAME }}:${{ steps.tag.outputs.tag }}"
+
+  # ── Deploy to dev (auto on main branch) ──────────────────────
+  deploy-dev:
+    name: Deploy to dev
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout gitops repo
+        uses: actions/checkout@v4
+        with:
+          repository: aartidevops/roboshop-gitops
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Update dev image tag
+        run: |
+          cd gitops
+          # Update image tag in dev values file
+          sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" \
+            environments/dev/${{ env.SERVICE_NAME }}-values.yaml
+          git config user.email "ci@roboshop.com"
+          git config user.name "CI Bot"
+          git add environments/dev/${{ env.SERVICE_NAME }}-values.yaml
+          git commit -m "ci: update ${{ env.SERVICE_NAME }} dev → ${{ needs.build.outputs.image_tag }}"
+          git push
+          echo "Dev deployment triggered for ${{ needs.build.outputs.image_tag }}"
+
+  # ── Deploy to UAT (manual trigger) ───────────────────────────
+  deploy-uat:
+    name: Deploy to UAT
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: uat
+      # Go to repo Settings → Environments → uat
+      # Add required reviewers — someone must approve before this runs
+
+    steps:
+      - name: Checkout gitops repo
+        uses: actions/checkout@v4
+        with:
+          repository: aartidevops/roboshop-gitops
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Update UAT image tag
+        run: |
+          cd gitops
+          sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" \
+            environments/uat/${{ env.SERVICE_NAME }}-values.yaml
+          git config user.email "ci@roboshop.com"
+          git config user.name "CI Bot"
+          git add environments/uat/${{ env.SERVICE_NAME }}-values.yaml
+          git commit -m "ci: update ${{ env.SERVICE_NAME }} uat → ${{ needs.build.outputs.image_tag }}"
+          git push
+          echo "UAT deployment triggered"
+
+  # ── Deploy to prod (manual trigger + approval) ────────────────
+  deploy-prod:
+    name: Deploy to prod
+    needs: [build, deploy-uat]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: prod
+      # Requires approval from senior team member
+
+    steps:
+      - name: Checkout gitops repo
+        uses: actions/checkout@v4
+        with:
+          repository: aartidevops/roboshop-gitops
+          token: ${{ secrets.GITOPS_TOKEN }}
+          path: gitops
+
+      - name: Update prod image tag
+        run: |
+          cd gitops
+          sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" \
+            environments/prod/${{ env.SERVICE_NAME }}-values.yaml
+          git config user.email "ci@roboshop.com"
+          git config user.name "CI Bot"
+          git add environments/prod/${{ env.SERVICE_NAME }}-values.yaml
+          git commit -m "ci: update ${{ env.SERVICE_NAME }} prod → ${{ needs.build.outputs.image_tag }}"
+          git push
+          echo "Prod deployment triggered"
