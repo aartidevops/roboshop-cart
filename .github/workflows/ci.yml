@@ -1,4 +1,4 @@
-name: CI — Catalogue
+name: CI — Cart
 
 on:
   push:
