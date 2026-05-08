@@ -80,7 +80,14 @@ jobs:
           git config user.name "CI Bot"
           git add environments/dev/${{ env.SERVICE_NAME }}-values.yaml
           git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} dev to ${{ needs.build.outputs.image_tag }}"
-          git push
+          # Retry push up to 3 times — handles race condition when multiple
+          # service pipelines push to gitops at the same time
+          for i in 1 2 3; do
+            git push origin main && break
+            echo "Push conflict (attempt $i/3), rebasing and retrying..."
+            git pull --rebase origin main
+            sleep $((i * 3))
+          done
 
   deploy_uat:
     name: Deploy to UAT
@@ -107,7 +114,12 @@ jobs:
           git config user.name "CI Bot"
           git add environments/uat/${{ env.SERVICE_NAME }}-values.yaml
           git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} uat to ${{ needs.build.outputs.image_tag }}"
-          git push
+          for i in 1 2 3; do
+            git push origin main && break
+            echo "Push conflict (attempt $i/3), rebasing and retrying..."
+            git pull --rebase origin main
+            sleep $((i * 3))
+          done
 
   deploy_prod:
     name: Deploy to prod
@@ -134,4 +146,9 @@ jobs:
           git config user.name "CI Bot"
           git add environments/prod/${{ env.SERVICE_NAME }}-values.yaml
           git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} prod to ${{ needs.build.outputs.image_tag }}"
-          git push
+          for i in 1 2 3; do
+            git push origin main && break
+            echo "Push conflict (attempt $i/3), rebasing and retrying..."
+            git pull --rebase origin main
+            sleep $((i * 3))
+          done
