@@ -6,149 +6,17 @@ on:
   pull_request:
     branches: [main]
 
-env:
-  SERVICE_NAME: cart
-  ACR: roboshopdevacr.azurecr.io
-
 jobs:
-  build:
-    name: Build and push
-    runs-on: ubuntu-latest
-    outputs:
-      image_tag: ${{ steps.tag.outputs.tag }}
-
-    # OIDC: GitHub needs permission to mint a JWT token for Azure to verify.
-    # id-token: write  → allows GitHub to generate the OIDC token
-    # contents: read   → allows checkout
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set image tag
-        id: tag
-        run: |
-          SHORT_SHA=$(git rev-parse --short HEAD)
-          BRANCH=$(echo ${GITHUB_REF_NAME} | sed 's/\//-/g')
-          TAG="${BRANCH}-${SHORT_SHA}"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "Image tag: $TAG"
-
-      - name: Azure login (OIDC - no secret required)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Login to ACR
-        run: |
-          az acr login --name roboshopdevacr
-
-      - name: Build and push Docker image
-        run: |
-          docker build \
-            --tag ${{ env.ACR }}/${{ env.SERVICE_NAME }}:${{ steps.tag.outputs.tag }} \
-            --tag ${{ env.ACR }}/${{ env.SERVICE_NAME }}:latest \
-            .
-          docker push ${{ env.ACR }}/${{ env.SERVICE_NAME }}:${{ steps.tag.outputs.tag }}
-          docker push ${{ env.ACR }}/${{ env.SERVICE_NAME }}:latest
-
-  deploy_dev:
-    name: Deploy to dev
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-
-    steps:
-      - name: Checkout gitops repo
-        uses: actions/checkout@v4
-        with:
-          repository: aartidevops/roboshop-gitops
-          token: ${{ secrets.GITOPS_TOKEN }}
-          path: gitops
-
-      - name: Update dev image tag
-        run: |
-          cd gitops
-          git pull origin main
-          sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" environments/dev/${{ env.SERVICE_NAME }}-values.yaml
-          git config user.email "ci@roboshop.com"
-          git config user.name "CI Bot"
-          git add environments/dev/${{ env.SERVICE_NAME }}-values.yaml
-          git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} dev to ${{ needs.build.outputs.image_tag }}"
-          # Retry push up to 3 times — handles race condition when multiple
-          # service pipelines push to gitops at the same time
-          for i in 1 2 3; do
-            git push origin main && break
-            echo "Push conflict (attempt $i/3), rebasing and retrying..."
-            git pull --rebase origin main
-            sleep $((i * 3))
-          done
-
-  deploy_uat:
-    name: Deploy to UAT
-    needs: [build, deploy_dev]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    environment:
-      name: uat
-
-    steps:
-      - name: Checkout gitops repo
-        uses: actions/checkout@v4
-        with:
-          repository: aartidevops/roboshop-gitops
-          token: ${{ secrets.GITOPS_TOKEN }}
-          path: gitops
-
-      - name: Update UAT image tag
-        run: |
-          cd gitops
-          git pull origin main
-          sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" environments/uat/${{ env.SERVICE_NAME }}-values.yaml
-          git config user.email "ci@roboshop.com"
-          git config user.name "CI Bot"
-          git add environments/uat/${{ env.SERVICE_NAME }}-values.yaml
-          git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} uat to ${{ needs.build.outputs.image_tag }}"
-          for i in 1 2 3; do
-            git push origin main && break
-            echo "Push conflict (attempt $i/3), rebasing and retrying..."
-            git pull --rebase origin main
-            sleep $((i * 3))
-          done
-
-  deploy_prod:
-    name: Deploy to prod
-    needs: [build, deploy_uat]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
-    environment:
-      name: prod
-
-    steps:
-      - name: Checkout gitops repo
-        uses: actions/checkout@v4
-        with:
-          repository: aartidevops/roboshop-gitops
-          token: ${{ secrets.GITOPS_TOKEN }}
-          path: gitops
-
-      - name: Update prod image tag
-        run: |
-          cd gitops
-          git pull origin main
-          sed -i "s|tag:.*|tag: \"${{ needs.build.outputs.image_tag }}\"|" environments/prod/${{ env.SERVICE_NAME }}-values.yaml
-          git config user.email "ci@roboshop.com"
-          git config user.name "CI Bot"
-          git add environments/prod/${{ env.SERVICE_NAME }}-values.yaml
-          git diff --staged --quiet || git commit -m "ci: update ${{ env.SERVICE_NAME }} prod to ${{ needs.build.outputs.image_tag }}"
-          for i in 1 2 3; do
-            git push origin main && break
-            echo "Push conflict (attempt $i/3), rebasing and retrying..."
-            git pull --rebase origin main
-            sleep $((i * 3))
-          done
+  ci:
+    uses: aartidevops/roboshop-gitops/.github/workflows/ci-reusable.yml@main
+    with:
+      service_name: cart
+      acr_name: roboshopdevacr
+      language: node
+      deploy_uat: true
+      deploy_prod: true
+    secrets:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
