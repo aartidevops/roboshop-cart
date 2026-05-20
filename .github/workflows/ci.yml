@@ -8,7 +8,7 @@ on:
 
 jobs:
   ci:
-    uses: aartidevops/roboshop-gitops/.github/workflows/ci-reusable.yml@main
+    uses: aartidevops/roboshop-workflows/.github/workflows/ci-reusable.yml@main
     with:
       service_name: cart
       acr_name: roboshopdevacr
