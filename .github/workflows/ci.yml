@@ -1,6 +1,7 @@
 name: CI - Cart
 
 on:
+  workflow_dispatch:  # allows manual trigger via gh CLI or GitHub UI
   push:
     branches: [main, develop]
   pull_request:
